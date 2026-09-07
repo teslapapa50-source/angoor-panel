@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -13,16 +13,12 @@ type Presence = {
   last_seen: string;
   device: string | null;
   executor: string | null;
-
-  // These fields are optional so the page still works with the current table.
   country?: string | null;
   country_code?: string | null;
   city?: string | null;
   latitude?: number | null;
   longitude?: number | null;
   session_started_at?: string | null;
-  started_at?: string | null;
-  play_time?: number | null;
 };
 
 function isActive(lastSeen: string) {
@@ -30,105 +26,61 @@ function isActive(lastSeen: string) {
 }
 
 function ago(lastSeen: string) {
-  const s = Math.max(
-    0,
-    Math.floor((Date.now() - new Date(lastSeen).getTime()) / 1000)
-  );
-
+  const s = Math.max(0, Math.floor((Date.now() - new Date(lastSeen).getTime()) / 1000));
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+  return `${Math.floor(s / 3600)}h ago`;
 }
 
-function duration(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
+function playTime(startedAt: string | null | undefined, lastSeen: string) {
+  if (!startedAt) return "—";
+  const start = new Date(startedAt).getTime();
+  const end = isActive(lastSeen) ? Date.now() : new Date(lastSeen).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "—";
 
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-
-  if (d > 0) return `${d}d ${h}h`;
+  const total = Math.floor((end - start) / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${sec}s`;
   return `${sec}s`;
 }
 
-function getPlayTime(row: Presence, now: number) {
-  if (typeof row.play_time === "number") return row.play_time;
-
-  const started = row.session_started_at || row.started_at;
-  if (started) {
-    return Math.max(
-      0,
-      Math.floor((now - new Date(started).getTime()) / 1000)
-    );
+function cleanText(v: string | null | undefined) {
+  const s = (v || "").trim();
+  if (!s) return "";
+  const lower = s.toLowerCase();
+  if (lower === "unknown" || lower === "null" || lower === "undefined" || lower === "n/a") {
+    return "";
   }
-
-  return 0;
+  return s;
 }
 
-function deviceLabel(device: string | null) {
-  if (!device) return "Unknown";
-
-  const d = device.toLowerCase();
-
-  if (d.includes("phone") || d.includes("mobile") || d.includes("android") || d.includes("ios")) {
-    return "Mobile";
-  }
-
-  if (d.includes("tablet") || d.includes("ipad")) return "Tablet";
-  if (d.includes("console") || d.includes("xbox") || d.includes("playstation")) {
-    return "Console";
-  }
-
-  return "PC";
+function deviceText(r: Presence) {
+  return cleanText(r.device) || "—";
 }
 
-function DeviceIcon({ device }: { device: string | null }) {
-  const label = deviceLabel(device);
-
-  if (label === "Mobile") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <rect x="7" y="2.5" width="10" height="19" rx="2" />
-        <path d="M10 5h4M11 18.5h2" />
-      </svg>
-    );
-  }
-
-  if (label === "Tablet") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <rect x="4" y="2.5" width="16" height="19" rx="2" />
-        <path d="M10 5h4M11 18.5h2" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <rect x="3" y="4" width="18" height="12" rx="1.5" />
-      <path d="M8 20h8M12 16v4M7 20h10" />
-    </svg>
-  );
+function executorText(r: Presence) {
+  return cleanText(r.executor) || "—";
 }
 
-function GlobeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M3 12h18M12 3c2.4 2.5 3.5 5.5 3.5 9s-1.1 6.5-3.5 9c-2.4-2.5-3.5-5.5-3.5-9S9.6 5.5 12 3Z" />
-    </svg>
-  );
+function locationText(r: Presence) {
+  const city = cleanText(r.city);
+  const country = cleanText(r.country);
+  const code = cleanText(r.country_code);
+  if (city && country) return `${city}, ${country}`;
+  if (city) return city;
+  if (country) return country;
+  if (code) return code;
+  if (r.latitude != null && r.longitude != null) {
+    return `${Number(r.latitude).toFixed(2)}, ${Number(r.longitude).toFixed(2)}`;
+  }
+  return "—";
 }
 
-function locationText(row: Presence) {
-  const parts = [row.city, row.country].filter(Boolean);
-  if (parts.length) return parts.join(", ");
-  if (row.country_code) return row.country_code.toUpperCase();
-  return "Location unavailable";
+function headshot(userId: number) {
+  return `https://www.roblox.com/headshot-thumbnail/image?userId=${userId}&width=150&height=150&format=png`;
 }
 
 export default function Page() {
@@ -138,8 +90,7 @@ export default function Page() {
   const [filter, setFilter] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [tpPopup, setTpPopup] = useState(false);
-  const [selectedTarget, setSelectedTarget] = useState<Presence | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [selectedTarget, setSelectedTarget] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setErr("");
@@ -155,486 +106,386 @@ export default function Page() {
       return;
     }
 
-    setRows((data as Presence[]) || []);
+    // One row per user_id — newest last_seen wins (query is newest → oldest)
+    const newestByUser = new Map<number, Presence>();
+    for (const row of (data as Presence[]) || []) {
+      if (!newestByUser.has(row.user_id)) {
+        newestByUser.set(row.user_id, row);
+      }
+    }
+
+    const list = Array.from(newestByUser.values()).sort((a, b) => {
+      const ao = isActive(a.last_seen) ? 1 : 0;
+      const bo = isActive(b.last_seen) ? 1 : 0;
+      if (ao !== bo) return bo - ao;
+      return new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime();
+    });
+
+    setRows(list);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
-
-    const refresh = setInterval(load, 5000);
-    const clock = setInterval(() => setNow(Date.now()), 1000);
-
-    return () => {
-      clearInterval(refresh);
-      clearInterval(clock);
-    };
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
   }, [load]);
 
-  const active = useMemo(
-    () => rows.filter((r) => isActive(r.last_seen)),
-    [rows, now]
-  );
+  const active = useMemo(() => rows.filter((r) => isActive(r.last_seen)), [rows]);
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
-
     if (!q) return rows;
-
     return rows.filter(
       (r) =>
         r.username?.toLowerCase().includes(q) ||
         r.display_name?.toLowerCase().includes(q) ||
         String(r.user_id).includes(q) ||
         r.job_id?.toLowerCase().includes(q) ||
-        locationText(r).toLowerCase().includes(q) ||
-        deviceLabel(r.device).toLowerCase().includes(q)
+        r.device?.toLowerCase().includes(q) ||
+        r.executor?.toLowerCase().includes(q) ||
+        r.country?.toLowerCase().includes(q) ||
+        r.city?.toLowerCase().includes(q)
     );
   }, [rows, filter]);
 
   async function kick(userId: number, username: string) {
     if (!confirm(`Kick ${username} (${userId})?`)) return;
-
     setBusyId(userId);
-
     const { error } = await supabase.from("remote_commands").insert({
       target_user_id: userId,
       command: "kick",
       args: { reason: "Kicked by mod panel" },
       consumed: false,
     });
-
     setBusyId(null);
-
-    if (error) alert(error.message);
-    else alert("Kick queued");
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    alert("Kick queued");
   }
 
   async function kill(userId: number, username: string) {
     if (!confirm(`Kill character of ${username}?`)) return;
-
     setBusyId(userId);
-
     const { error } = await supabase.from("remote_commands").insert({
       target_user_id: userId,
       command: "kill",
       args: {},
       consumed: false,
     });
-
     setBusyId(null);
-
-    if (error) alert(error.message);
-    else alert("Kill queued");
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    alert("Kill queued");
   }
 
-  function openTp(row: Presence) {
-    setSelectedTarget(row);
-    setTpPopup(true);
-  }
-
-  async function tpTo(targetPlayer: Presence) {
+  async function tpTo(targetUserId: number) {
     if (!selectedTarget) return;
+    const target = rows.find((r) => r.user_id === selectedTarget);
+    const destination = rows.find((r) => r.user_id === targetUserId);
+    if (!target || !destination) return;
+
+    if (target.job_id !== destination.job_id) {
+      alert("That player is not in the same server.");
+      return;
+    }
 
     setTpPopup(false);
-    setBusyId(selectedTarget.user_id);
+    setBusyId(selectedTarget);
 
     const { error } = await supabase.from("remote_commands").insert({
-      target_user_id: selectedTarget.user_id,
+      target_user_id: selectedTarget,
       command: "tp",
       args: {
-        target_id: targetPlayer.user_id,
-        target_job_id: targetPlayer.job_id,
+        target_id: targetUserId,
+        to_user_id: targetUserId,
+        to_username: destination.username,
+        target_job_id: destination.job_id,
       },
       consumed: false,
     });
 
     setBusyId(null);
-
-    if (error) alert(error.message);
-    else alert(`TP queued: ${selectedTarget.username} → ${targetPlayer.username}`);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    alert("TP queued");
   }
 
-  const sameServerTargets = useMemo(() => {
-    if (!selectedTarget) return [];
+  const selectedPlayer = selectedTarget
+    ? rows.find((r) => r.user_id === selectedTarget)
+    : null;
 
-    return active.filter(
-      (p) =>
-        p.job_id === selectedTarget.job_id &&
-        p.user_id !== selectedTarget.user_id
-    );
-  }, [active, selectedTarget]);
+  const sameServerPlayers = selectedPlayer
+    ? active.filter(
+        (p) =>
+          p.user_id !== selectedPlayer.user_id &&
+          p.job_id === selectedPlayer.job_id
+      )
+    : [];
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#060914] text-zinc-100">
-      {/* Background */}
-      <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute -left-32 -top-32 h-[420px] w-[420px] rounded-full bg-sky-500/10 blur-[110px]" />
-        <div className="absolute -right-32 top-1/3 h-[500px] w-[500px] rounded-full bg-violet-500/10 blur-[130px]" />
-        <div className="absolute bottom-[-220px] left-1/3 h-[500px] w-[500px] rounded-full bg-emerald-500/5 blur-[130px]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.045),transparent_35%)]" />
+    <main className="min-h-screen bg-[#07090d] text-zinc-100 p-6 font-sans">
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="absolute top-1/3 -right-40 w-96 h-96 rounded-full bg-emerald-500/10 blur-3xl" />
       </div>
 
-      <div className="mx-auto max-w-[1500px] space-y-6 p-5 sm:p-8">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="relative max-w-7xl mx-auto space-y-6">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-2">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.8)]" />
-              <span className="text-xs font-medium uppercase tracking-[0.2em] text-emerald-300/80">
-                Live monitoring
-              </span>
-            </div>
-            <h1 className="text-4xl font-semibold tracking-[-0.04em]">
-              Angoor Panel
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              Script sessions, devices, locations and server activity
+            <h1 className="text-3xl font-semibold tracking-tight">Angoor Panel</h1>
+            <p className="text-zinc-400 text-sm">
+              One live presence per Roblox user • auto-refresh 5s
             </p>
           </div>
 
           <button
             onClick={load}
-            className="rounded-2xl border border-white/10 bg-white/[0.06] px-5 py-3 text-sm font-medium backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/[0.1] active:translate-y-0"
+            className="rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 px-6 py-3 text-sm transition"
           >
             Refresh
           </button>
         </header>
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/10 backdrop-blur-2xl">
-            <div className="text-xs text-zinc-500">Active now</div>
-            <div className="mt-2 text-4xl font-semibold text-emerald-400">{active.length}</div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-3xl bg-white/5 border border-white/10 px-6 py-5 backdrop-blur-xl">
+            <div className="text-xs text-zinc-400">Active now</div>
+            <div className="text-4xl font-semibold text-emerald-400">{active.length}</div>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/10 backdrop-blur-2xl">
-            <div className="text-xs text-zinc-500">Script sessions</div>
-            <div className="mt-2 text-4xl font-semibold">{rows.length}</div>
+          <div className="rounded-3xl bg-white/5 border border-white/10 px-6 py-5 backdrop-blur-xl">
+            <div className="text-xs text-zinc-400">Unique players</div>
+            <div className="text-4xl font-semibold">{rows.length}</div>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/10 backdrop-blur-2xl">
-            <div className="text-xs text-zinc-500">Unique servers</div>
-            <div className="mt-2 text-4xl font-semibold text-sky-400">
-              {new Set(rows.map((r) => r.job_id)).size}
+          <div className="rounded-3xl bg-white/5 border border-white/10 px-6 py-5 backdrop-blur-xl">
+            <div className="text-xs text-zinc-400">Unique servers</div>
+            <div className="text-4xl font-semibold">
+              {new Set(rows.map((r) => r.job_id).filter(Boolean)).size}
             </div>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/10 backdrop-blur-2xl">
-            <div className="text-xs text-zinc-500">Unique players</div>
-            <div className="mt-2 text-4xl font-semibold text-violet-400">
-              {new Set(rows.map((r) => r.user_id)).size}
-            </div>
+          <div className="rounded-3xl bg-white/5 border border-white/10 px-6 py-5 backdrop-blur-xl">
+            <div className="text-xs text-zinc-400">Refresh</div>
+            <div className="text-4xl font-semibold text-sky-400">5s</div>
           </div>
         </div>
 
-        <div className="relative">
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search player, ID, server, device or location…"
-            className="w-full rounded-3xl border border-white/10 bg-white/[0.045] px-6 py-4 text-sm outline-none backdrop-blur-2xl transition placeholder:text-zinc-600 focus:border-sky-400/50 focus:bg-white/[0.065]"
-          />
-        </div>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search username, ID, server, device, executor, city…"
+          className="w-full rounded-3xl bg-white/5 border border-white/10 px-6 py-4 text-sm backdrop-blur-xl focus:outline-none focus:border-sky-500/60"
+        />
 
         {err && (
-          <div className="rounded-3xl border border-red-500/20 bg-red-500/10 px-6 py-4 text-sm text-red-200">
+          <div className="rounded-3xl border border-red-900/50 bg-red-950/40 px-6 py-4 text-sm text-red-200">
             {err}
           </div>
         )}
 
         {loading ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-10 text-center text-sm text-zinc-500">
-            Loading sessions…
-          </div>
+          <p className="text-zinc-500 text-sm">Loading...</p>
         ) : shown.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-10 text-center text-sm text-zinc-500">
-            No script sessions found.
-          </div>
+          <p className="text-zinc-500 text-sm">No users on the script. Run the script in game.</p>
         ) : (
-          <div className="overflow-hidden rounded-3xl border border-white/10 bg-black/20 shadow-2xl shadow-black/20 backdrop-blur-2xl">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1250px] text-sm">
-                <thead className="border-b border-white/10 bg-white/[0.045] text-xs uppercase tracking-wider text-zinc-500">
-                  <tr>
-                    <th className="px-5 py-4 text-left">Status</th>
-                    <th className="px-5 py-4 text-left">Player</th>
-                    <th className="px-5 py-4 text-left">Device</th>
-                    <th className="px-5 py-4 text-left">Location</th>
-                    <th className="px-5 py-4 text-left">Play time</th>
-                    <th className="px-5 py-4 text-left">Place</th>
-                    <th className="px-5 py-4 text-left">Server</th>
-                    <th className="px-5 py-4 text-left">Executor</th>
-                    <th className="px-5 py-4 text-left">Last seen</th>
-                    <th className="px-5 py-4 text-left">Actions</th>
-                  </tr>
-                </thead>
+          <div className="overflow-x-auto rounded-3xl border border-white/10 bg-black/20 backdrop-blur-xl">
+            <table className="w-full text-sm">
+              <thead className="bg-white/5 text-white/70">
+                <tr>
+                  <th className="px-6 py-4 text-left">Status</th>
+                  <th className="px-6 py-4 text-left">User</th>
+                  <th className="px-6 py-4 text-left">Place</th>
+                  <th className="px-6 py-4 text-left">Server</th>
+                  <th className="px-6 py-4 text-left">Device</th>
+                  <th className="px-6 py-4 text-left">Location</th>
+                  <th className="px-6 py-4 text-left">Play time</th>
+                  <th className="px-6 py-4 text-left">Executor</th>
+                  <th className="px-6 py-4 text-left">Last seen</th>
+                  <th className="px-6 py-4 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((r) => {
+                  const on = isActive(r.last_seen);
+                  const busy = busyId === r.user_id;
 
-                <tbody>
-                  {shown.map((r, index) => {
-                    const on = isActive(r.last_seen);
-                    const sameUserCount = rows.filter((x) => x.user_id === r.user_id).length;
-                    const playTime = getPlayTime(r, now);
-
-                    return (
-                      <tr
-                        key={r.id ?? `${r.user_id}-${r.last_seen}-${index}`}
-                        className="border-t border-white/[0.06] transition hover:bg-white/[0.035]"
-                      >
-                        <td className="px-5 py-4">
+                  return (
+                    <tr
+                      key={r.user_id}
+                      className="border-t border-white/10 hover:bg-white/5 transition-colors"
+                    >
+                      <td className="px-6 py-4">
+                        <div
+                          className={`inline-flex items-center gap-2 rounded-2xl px-3 py-1 text-xs font-medium ${
+                            on
+                              ? "bg-emerald-500/15 text-emerald-400"
+                              : "bg-white/5 text-zinc-400"
+                          }`}
+                        >
                           <div
-                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs ${
-                              on
-                                ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-300"
-                                : "border-white/10 bg-white/[0.04] text-zinc-500"
+                            className={`h-2 w-2 rounded-full ${
+                              on ? "bg-emerald-400" : "bg-zinc-500"
                             }`}
+                          />
+                          {on ? "Online" : "Offline"}
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={headshot(r.user_id)}
+                            alt=""
+                            className="w-9 h-9 rounded-2xl object-cover bg-zinc-800"
+                          />
+                          <div>
+                            <div className="font-medium">{r.display_name || r.username}</div>
+                            <div className="text-xs text-zinc-400">
+                              @{r.username} • {r.user_id}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {r.place_id ? (
+                          <a
+                            href={`https://www.roblox.com/games/${r.place_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sky-400 hover:underline"
                           >
-                            <span
-                              className={`h-1.5 w-1.5 rounded-full ${
-                                on
-                                  ? "animate-pulse bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"
-                                  : "bg-zinc-600"
-                              }`}
-                            />
-                            {on ? "Active" : "Offline"}
-                          </div>
-                        </td>
+                            {r.place_id}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
 
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <img
-                              src={`https://thumbnails.roblox.com/v1/users/avatar?userIds=${r.user_id}&size=48x48&format=png`}
-                              alt=""
-                              className="h-10 w-10 rounded-2xl border border-white/10 bg-white/5"
-                            />
-                            <div>
-                              <div className="flex items-center gap-2 font-medium">
-                                {r.display_name || r.username}
-                                {sameUserCount > 1 && (
-                                  <span className="rounded-full bg-violet-400/10 px-2 py-0.5 text-[10px] text-violet-300">
-                                    {sameUserCount} sessions
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-0.5 text-xs text-zinc-500">
-                                @{r.username} · {r.user_id}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
+                      <td className="px-6 py-4 font-mono text-xs text-zinc-400 max-w-32 truncate">
+                        {r.job_id || "—"}
+                      </td>
 
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <span className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-zinc-400">
-                              <DeviceIcon device={r.device} />
-                            </span>
-                            <div>
-                              <div>{deviceLabel(r.device)}</div>
-                              <div className="text-xs text-zinc-600">{r.device || "unknown"}</div>
-                            </div>
-                          </div>
-                        </td>
+                      <td className="px-6 py-4 text-zinc-300">{deviceText(r)}</td>
 
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="rounded-xl border border-sky-400/10 bg-sky-400/10 p-2 text-sky-300">
-                              <GlobeIcon />
-                            </span>
-                            <div>
-                              <div className="text-zinc-300">{locationText(r)}</div>
-                              {r.latitude != null && r.longitude != null ? (
-                                <div className="text-xs text-zinc-600">
-                                  {r.latitude.toFixed(3)}, {r.longitude.toFixed(3)}
-                                </div>
-                              ) : (
-                                <div className="text-xs text-zinc-600">
-                                  Add geo data to presence
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
+                      <td className="px-6 py-4 text-zinc-400">
+                        <div>{locationText(r)}</div>
+                        {cleanText(r.country_code) && (
+                          <div className="text-xs text-zinc-600">{r.country_code}</div>
+                        )}
+                      </td>
 
-                        <td className="px-5 py-4">
-                          <div className="font-mono text-xs text-zinc-300">
-                            {playTime ? duration(playTime) : "—"}
-                          </div>
-                        </td>
+                      <td className="px-6 py-4 text-zinc-300">
+                        {playTime(r.session_started_at, r.last_seen)}
+                      </td>
 
-                        <td className="px-5 py-4">
-                          {r.place_id ? (
-                            <a
-                              href={`https://www.roblox.com/games/${r.place_id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-sky-300 transition hover:text-sky-200 hover:underline"
-                            >
-                              {r.place_id}
-                            </a>
-                          ) : (
-                            <span className="text-zinc-600">—</span>
-                          )}
-                        </td>
+                      <td className="px-6 py-4 text-zinc-400">{executorText(r)}</td>
 
-                        <td className="max-w-[180px] px-5 py-4">
-                          <div className="truncate font-mono text-xs text-zinc-500" title={r.job_id}>
-                            {r.job_id}
-                          </div>
-                        </td>
+                      <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">
+                        {ago(r.last_seen)}
+                      </td>
 
-                        <td className="px-5 py-4 text-zinc-500">
-                          {r.executor || "unknown"}
-                        </td>
-
-                        <td className="px-5 py-4 whitespace-nowrap text-zinc-500">
-                          {ago(r.last_seen)}
-                        </td>
-
-                        <td className="px-5 py-4">
-                          <div className="flex gap-2">
-                            <button
-                              disabled={busyId === r.user_id}
-                              onClick={() => kick(r.user_id, r.username)}
-                              className="rounded-xl border border-red-400/10 bg-red-400/10 px-3 py-2 text-xs text-red-300 transition hover:bg-red-400/20 disabled:cursor-wait disabled:opacity-50"
-                            >
-                              Kick
-                            </button>
-
-                            <button
-                              disabled={busyId === r.user_id}
-                              onClick={() => kill(r.user_id, r.username)}
-                              className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-zinc-300 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-50"
-                            >
-                              Kill
-                            </button>
-
-                            <button
-                              disabled={!on || busyId === r.user_id}
-                              onClick={() => openTp(r)}
-                              className="rounded-xl border border-sky-400/10 bg-sky-400/10 px-3 py-2 text-xs text-sky-300 transition hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              TP
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button
+                            disabled={busy || !on}
+                            onClick={() => kick(r.user_id, r.username)}
+                            className="rounded-2xl bg-red-500/15 text-red-400 hover:bg-red-500/25 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 text-xs transition"
+                          >
+                            Kick
+                          </button>
+                          <button
+                            disabled={busy || !on}
+                            onClick={() => kill(r.user_id, r.username)}
+                            className="rounded-2xl bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 text-xs transition"
+                          >
+                            Kill
+                          </button>
+                          <button
+                            disabled={!on || busy}
+                            onClick={() => {
+                              setSelectedTarget(r.user_id);
+                              setTpPopup(true);
+                            }}
+                            className="rounded-2xl bg-sky-500/15 text-sky-400 hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 text-xs transition"
+                          >
+                            TP
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
-      {/* Smooth TP modal */}
-      {tpPopup && selectedTarget && (
+      {tpPopup && selectedPlayer && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md animate-[fadeIn_180ms_ease-out]"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setTpPopup(false);
-          }}
+          className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4"
+          onClick={() => setTpPopup(false)}
         >
-          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1020]/95 shadow-2xl shadow-black/50 backdrop-blur-2xl animate-[modalIn_220ms_cubic-bezier(.16,1,.3,1)]">
-            <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
+          <div
+            className="w-full max-w-md rounded-3xl bg-[#0d1117]/95 border border-white/10 shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
               <div>
-                <div className="text-lg font-semibold">Teleport player</div>
-                <div className="mt-1 text-xs text-zinc-500">
+                <h2 className="text-xl font-semibold">TP {selectedPlayer.username}</h2>
+                <p className="text-xs text-zinc-500 mt-1">
                   Select an active player in the same server
-                </div>
+                </p>
               </div>
-
               <button
                 onClick={() => setTpPopup(false)}
-                className="rounded-xl bg-white/[0.05] px-3 py-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                className="w-9 h-9 rounded-2xl bg-white/5 hover:bg-white/10 text-zinc-400 transition"
               >
-                ✕
+                ×
               </button>
             </div>
 
-            <div className="px-6 py-4">
-              <div className="mb-4 flex items-center gap-3 rounded-2xl border border-sky-400/10 bg-sky-400/[0.06] p-3">
-                <img
-                  src={`https://thumbnails.roblox.com/v1/users/avatar?userIds=${selectedTarget.user_id}&size=48x48&format=png`}
-                  alt=""
-                  className="h-9 w-9 rounded-xl"
-                />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">
-                    {selectedTarget.display_name || selectedTarget.username}
-                  </div>
-                  <div className="truncate text-xs text-zinc-500">
-                    Server: {selectedTarget.job_id}
-                  </div>
-                </div>
+            {sameServerPlayers.length === 0 ? (
+              <div className="rounded-2xl bg-white/5 border border-white/10 p-5 text-sm text-zinc-400 text-center">
+                No other active players are in this server.
               </div>
-
-              <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-                {sameServerTargets.length === 0 ? (
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8 text-center">
-                    <div className="text-sm text-zinc-400">
-                      No other active players found.
+            ) : (
+              <div className="max-h-96 overflow-auto space-y-2">
+                {sameServerPlayers.map((p) => (
+                  <button
+                    key={p.user_id}
+                    onClick={() => tpTo(p.user_id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 rounded-2xl text-left transition"
+                  >
+                    <img
+                      src={headshot(p.user_id)}
+                      alt=""
+                      className="w-9 h-9 rounded-2xl object-cover bg-zinc-800"
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium">{p.display_name || p.username}</div>
+                      <div className="text-xs text-zinc-500">@{p.username} • Online</div>
                     </div>
-                    <div className="mt-1 text-xs text-zinc-600">
-                      The target must be active in the same JobId.
-                    </div>
-                  </div>
-                ) : (
-                  sameServerTargets.map((p) => (
-                    <button
-                      key={`${p.user_id}-${p.id ?? p.last_seen}`}
-                      onClick={() => tpTo(p)}
-                      className="group flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-sky-400/10 hover:bg-sky-400/[0.07]"
-                    >
-                      <img
-                        src={`https://thumbnails.roblox.com/v1/users/avatar?userIds=${p.user_id}&size=48x48&format=png`}
-                        alt=""
-                        className="h-9 w-9 rounded-xl border border-white/10"
-                      />
-
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">
-                          {p.display_name || p.username}
-                        </div>
-                        <div className="truncate text-xs text-zinc-500">
-                          @{p.username} · {deviceLabel(p.device)}
-                        </div>
-                      </div>
-
-                      <span className="rounded-xl bg-sky-400/10 px-3 py-1.5 text-xs text-sky-300 opacity-70 transition group-hover:opacity-100">
-                        TP →
-                      </span>
-                    </button>
-                  ))
-                )}
+                    <span className="text-xs text-sky-400">TP →</span>
+                  </button>
+                ))}
               </div>
+            )}
 
-              <button
-                onClick={() => setTpPopup(false)}
-                className="mt-4 w-full rounded-2xl border border-white/10 bg-white/[0.04] py-3 text-sm text-zinc-400 transition hover:bg-white/[0.08] hover:text-zinc-200"
-              >
-                Cancel
-              </button>
-            </div>
+            <button
+              onClick={() => setTpPopup(false)}
+              className="mt-5 w-full py-3 text-sm text-zinc-400 hover:bg-white/5 rounded-2xl transition"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
-
-      <style jsx global>{`
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        @keyframes modalIn {
-          from {
-            opacity: 0;
-            transform: translateY(12px) scale(0.97);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-      `}</style>
     </main>
   );
 }
