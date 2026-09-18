@@ -37,7 +37,6 @@ function playTime(startedAt: string | null | undefined, lastSeen: string) {
   const start = new Date(startedAt).getTime();
   const end = isActive(lastSeen) ? Date.now() : new Date(lastSeen).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "—";
-
   const total = Math.floor((end - start) / 1000);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -91,36 +90,32 @@ export default function Page() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [tpPopup, setTpPopup] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState<number | null>(null);
+  // track freeze toggle state per user for button label (best-effort UI only)
+  const [frozen, setFrozen] = useState<Record<number, boolean>>({});
 
   const load = useCallback(async () => {
     setErr("");
-
     const { data, error } = await supabase
       .from("script_presence")
       .select("*")
       .order("last_seen", { ascending: false });
-
     if (error) {
       setErr(error.message);
       setLoading(false);
       return;
     }
-
-    // One row per user_id — newest last_seen wins (query is newest → oldest)
     const newestByUser = new Map<number, Presence>();
     for (const row of (data as Presence[]) || []) {
       if (!newestByUser.has(row.user_id)) {
         newestByUser.set(row.user_id, row);
       }
     }
-
     const list = Array.from(newestByUser.values()).sort((a, b) => {
       const ao = isActive(a.last_seen) ? 1 : 0;
       const bo = isActive(b.last_seen) ? 1 : 0;
       if (ao !== bo) return bo - ao;
       return new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime();
     });
-
     setRows(list);
     setLoading(false);
   }, []);
@@ -149,38 +144,55 @@ export default function Page() {
     );
   }, [rows, filter]);
 
-  async function kick(userId: number, username: string) {
-    if (!confirm(`Kick ${username} (${userId})?`)) return;
+  async function queueCommand(
+    userId: number,
+    command: string,
+    args: Record<string, unknown> = {},
+    okMsg?: string
+  ) {
     setBusyId(userId);
     const { error } = await supabase.from("remote_commands").insert({
       target_user_id: userId,
-      command: "kick",
-      args: { reason: "Kicked by mod panel" },
+      command,
+      args,
       consumed: false,
     });
     setBusyId(null);
     if (error) {
       alert(error.message);
-      return;
+      return false;
     }
-    alert("Kick queued");
+    if (okMsg) alert(okMsg);
+    return true;
+  }
+
+  async function kick(userId: number, username: string) {
+    if (!confirm(`Kick ${username} (${userId})?`)) return;
+    await queueCommand(userId, "kick", { reason: "Kicked by mod panel" }, "Kick queued");
   }
 
   async function kill(userId: number, username: string) {
     if (!confirm(`Kill character of ${username}?`)) return;
-    setBusyId(userId);
-    const { error } = await supabase.from("remote_commands").insert({
-      target_user_id: userId,
-      command: "kill",
-      args: {},
-      consumed: false,
-    });
-    setBusyId(null);
-    if (error) {
-      alert(error.message);
-      return;
+    await queueCommand(userId, "kill", {}, "Kill queued");
+  }
+
+  /** Freeze / unfreeze — matches Angoor !freeze remote command */
+  async function freeze(userId: number, username: string) {
+    const isFrozen = !!frozen[userId];
+    const next = !isFrozen;
+    const label = next ? "Freeze" : "Unfreeze";
+    if (!confirm(`${label} ${username}?`)) return;
+    // Prefer explicit freeze/unfreeze; also send state for clients that only handle "freeze"
+    const cmd = next ? "freeze" : "unfreeze";
+    const ok = await queueCommand(
+      userId,
+      cmd,
+      { state: next, enabled: next, reason: "Panel freeze" },
+      `${label} queued`
+    );
+    if (ok) {
+      setFrozen((prev) => ({ ...prev, [userId]: next }));
     }
-    alert("Kill queued");
   }
 
   async function tpTo(targetUserId: number) {
@@ -188,15 +200,12 @@ export default function Page() {
     const target = rows.find((r) => r.user_id === selectedTarget);
     const destination = rows.find((r) => r.user_id === targetUserId);
     if (!target || !destination) return;
-
     if (target.job_id !== destination.job_id) {
       alert("That player is not in the same server.");
       return;
     }
-
     setTpPopup(false);
     setBusyId(selectedTarget);
-
     const { error } = await supabase.from("remote_commands").insert({
       target_user_id: selectedTarget,
       command: "tp",
@@ -208,7 +217,6 @@ export default function Page() {
       },
       consumed: false,
     });
-
     setBusyId(null);
     if (error) {
       alert(error.message);
@@ -244,7 +252,6 @@ export default function Page() {
               One live presence per Roblox user • auto-refresh 5s
             </p>
           </div>
-
           <button
             onClick={load}
             className="rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 px-6 py-3 text-sm transition"
@@ -312,7 +319,7 @@ export default function Page() {
                 {shown.map((r) => {
                   const on = isActive(r.last_seen);
                   const busy = busyId === r.user_id;
-
+                  const isFrozen = !!frozen[r.user_id];
                   return (
                     <tr
                       key={r.user_id}
@@ -334,7 +341,6 @@ export default function Page() {
                           {on ? "Online" : "Offline"}
                         </div>
                       </td>
-
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <img
@@ -350,7 +356,6 @@ export default function Page() {
                           </div>
                         </div>
                       </td>
-
                       <td className="px-6 py-4">
                         {r.place_id ? (
                           <a
@@ -365,32 +370,25 @@ export default function Page() {
                           "—"
                         )}
                       </td>
-
                       <td className="px-6 py-4 font-mono text-xs text-zinc-400 max-w-32 truncate">
                         {r.job_id || "—"}
                       </td>
-
                       <td className="px-6 py-4 text-zinc-300">{deviceText(r)}</td>
-
                       <td className="px-6 py-4 text-zinc-400">
                         <div>{locationText(r)}</div>
                         {cleanText(r.country_code) && (
                           <div className="text-xs text-zinc-600">{r.country_code}</div>
                         )}
                       </td>
-
                       <td className="px-6 py-4 text-zinc-300">
                         {playTime(r.session_started_at, r.last_seen)}
                       </td>
-
                       <td className="px-6 py-4 text-zinc-400">{executorText(r)}</td>
-
                       <td className="px-6 py-4 text-zinc-400 whitespace-nowrap">
                         {ago(r.last_seen)}
                       </td>
-
                       <td className="px-6 py-4">
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <button
                             disabled={busy || !on}
                             onClick={() => kick(r.user_id, r.username)}
@@ -404,6 +402,17 @@ export default function Page() {
                             className="rounded-2xl bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 text-xs transition"
                           >
                             Kill
+                          </button>
+                          <button
+                            disabled={busy || !on}
+                            onClick={() => freeze(r.user_id, r.username)}
+                            className={`rounded-2xl px-4 py-1.5 text-xs transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                              isFrozen
+                                ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30"
+                                : "bg-violet-500/15 text-violet-300 hover:bg-violet-500/25"
+                            }`}
+                          >
+                            {isFrozen ? "Unfreeze" : "Freeze"}
                           </button>
                           <button
                             disabled={!on || busy}
@@ -449,7 +458,6 @@ export default function Page() {
                 ×
               </button>
             </div>
-
             {sameServerPlayers.length === 0 ? (
               <div className="rounded-2xl bg-white/5 border border-white/10 p-5 text-sm text-zinc-400 text-center">
                 No other active players are in this server.
@@ -476,7 +484,6 @@ export default function Page() {
                 ))}
               </div>
             )}
-
             <button
               onClick={() => setTpPopup(false)}
               className="mt-5 w-full py-3 text-sm text-zinc-400 hover:bg-white/5 rounded-2xl transition"
